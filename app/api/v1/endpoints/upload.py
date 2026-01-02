@@ -2,9 +2,17 @@ from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from google.genai import Client
 from google.genai.types import UploadFileConfig
-import os
-import tempfile
 import time
+from app.services.open_router import summarize_video_with_openrouter
+import tempfile
+import os
+from app.utils.system_prompt import SYSTEM_PROMPT_TEMPLATE
+import uuid
+from pathlib import Path
+from app.core.config import SYSTEM_PROMPT_DIR
+
+
+
 
 router = APIRouter()
 
@@ -16,7 +24,7 @@ client = Client(api_key=GEMINI_API_KEY)
 video_memory = {}
 
 
-@router.post("/upload-video/")
+@router.post("/upload-video/gemini-model")
 async def upload_video(video: UploadFile = File(...)):
     try:
         # Read video bytes
@@ -75,24 +83,54 @@ async def upload_video(video: UploadFile = File(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/ask/")
-async def ask_question(video_id: str = Form(...), question: str = Form(...)):
-    if video_id not in video_memory:
-        return JSONResponse({"error": "Upload video first"}, status_code=400)
 
-    context = video_memory[video_id]["summary"]
 
-    prompt = f"""
-    You are answering based only on the video context below.
-    Video Context:
-    {context}
 
-    Question: {question}
-    """
+@router.post("/summarize-video/open-router")
+async def summarize_video(video: UploadFile = File(...)):
+    # Save file temporarily (only for metadata / preprocessing)
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(await video.read())
+        video_path = tmp.name
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt
-    )
+    try:
+        context = f"""
+                This is a short video clip.
 
-    return {"response": response.text}
+                Important instructions:
+                - Keep descriptions generalized and non-specific
+                - If details are unclear, describe them abstractly
+
+                Task:
+                Provide a structured video summary with:
+                1. A brief overview of what the video appears to be about
+                2. Name of characters and scene-by-scene breakdown (with timestamps)
+                3. Key themes or emotions conveyed
+                4. The most memorable aspect (in abstract terms)
+                5. An overall impression of the video
+                6. Look for key figures and what they were doing
+
+                The video filename is: "{video.filename}"
+            """
+
+
+        summary = summarize_video_with_openrouter(context)
+
+
+        session_id = str(uuid.uuid4())
+        prompt_text = SYSTEM_PROMPT_TEMPLATE.format(summary=summary)
+
+        # prompt_file = Path(f"/tmp/{session_id}_system_prompt.txt")
+        prompt_path = SYSTEM_PROMPT_DIR / f"{session_id}_system_prompt.txt"
+        prompt_path.write_text(prompt_text)
+
+        # prompt_file.write_text(prompt_text)
+
+        return {
+            "session_id": session_id,
+            "video_id": video.filename,
+            "summary": summary
+        }
+
+    finally:
+        os.unlink(video_path)

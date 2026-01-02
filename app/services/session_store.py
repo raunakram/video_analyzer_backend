@@ -1,10 +1,11 @@
-sessions = {}
+SESSIONS = {}
 
-def get_session(session_id):
-    if session_id not in sessions:
-        sessions[session_id] = {
+def get_session(session_id: str):
+    if session_id not in SESSIONS:
+        SESSIONS[session_id] = {
             "messages": [],
             "question_index": 0,
-            "attempts": 0
+            "attempts": 0,
+            "system_added": False
         }
-    return sessions[session_id]
+    return SESSIONS[session_id]
