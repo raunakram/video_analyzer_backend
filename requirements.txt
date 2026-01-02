@@ -14,3 +14,4 @@ google-crc32c
 google-genai
 google-generativeai
 googleapis-common-protos
+python-multipart
