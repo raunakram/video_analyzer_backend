@@ -15,3 +15,5 @@ google-genai
 google-generativeai
 googleapis-common-protos
 python-multipart
+yt-dlp
+boto3

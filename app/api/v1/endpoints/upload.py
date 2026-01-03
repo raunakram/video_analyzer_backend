@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
 from google.genai import Client
 from google.genai.types import UploadFileConfig
@@ -10,8 +10,9 @@ from app.utils.system_prompt import SYSTEM_PROMPT_TEMPLATE
 import uuid
 from pathlib import Path
 from app.core.config import SYSTEM_PROMPT_DIR
-
-
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from app.utils.upload_utils import extract_video_id
+from app.services.s3_services import download_s3_object
 
 
 router = APIRouter()
@@ -129,6 +130,119 @@ async def summarize_video(video: UploadFile = File(...)):
         return {
             "session_id": session_id,
             "video_id": video.filename,
+            "summary": summary
+        }
+
+    finally:
+        os.unlink(video_path)
+
+
+
+
+
+
+@router.post("/summarize-video/open-router/youtube")
+async def summarize_youtube_video(youtube_url: str = Form(...)):
+    try:
+        video_id = extract_video_id(youtube_url)
+
+        transcript_text = None
+
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+            transcript_text = " ".join(x["text"] for x in transcript)
+        except (TranscriptsDisabled, NoTranscriptFound):
+            transcript_text = None
+
+
+        reference_block = (
+            f"Transcript (reference only):\n{transcript_text}"
+            if transcript_text
+            else "No transcript or metadata available. Use abstract reasoning only."
+        )
+
+
+        context = f"""
+                This is a short video clip.
+
+                Important instructions:
+                - Keep descriptions generalized and non-specific
+                - If details are unclear, describe them abstractly
+
+                Task:
+                Provide a structured video summary with:
+                1. A brief overview of what the video appears to be about
+                2. Name of characters and scene-by-scene breakdown (with timestamps)
+                3. Key themes or emotions conveyed
+                4. The most memorable aspect (in abstract terms)
+                5. An overall impression of the video
+                6. Look for key figures and what they were doing
+
+                The video filename is: "{video_id}"
+
+                {reference_block}
+            """
+
+        summary = summarize_video_with_openrouter(context)
+
+        session_id = str(uuid.uuid4())
+        prompt_text = SYSTEM_PROMPT_TEMPLATE.format(summary=summary)
+        prompt_path = SYSTEM_PROMPT_DIR / f"{session_id}_system_prompt.txt"
+        prompt_path.write_text(prompt_text)
+
+        return {
+            "session_id": session_id,
+            "video_id": video_id,
+            "summary": summary,
+            "source": "youtube"
+        }
+
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@router.post("/summarize-video/from-s3")
+async def summarize_video_from_s3(s3_key: str = Query(...)):
+    # Download S3 object temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        download_s3_object(s3_key, tmp.name)
+        video_path = tmp.name
+
+    try:
+        context = f"""
+        This is a short video clip.
+
+                Important instructions:
+                - Keep descriptions generalized and non-specific
+                - If details are unclear, describe them abstractly
+
+                Task:
+                Provide a structured video summary with:
+                1. A brief overview of what the video appears to be about
+                2. Name of characters and scene-by-scene breakdown (with timestamps)
+                3. Key themes or emotions conveyed
+                4. The most memorable aspect (in abstract terms)
+                5. An overall impression of the video
+                6. Look for key figures and what they were doing
+
+        Video source: {s3_key}
+        """
+
+        summary = summarize_video_with_openrouter(context)
+
+        session_id = str(uuid.uuid4())
+        prompt_text = SYSTEM_PROMPT_TEMPLATE.format(summary=summary)
+
+        prompt_path = SYSTEM_PROMPT_DIR / f"{session_id}_system_prompt.txt"
+        prompt_path.write_text(prompt_text)
+
+        return {
+            "session_id": session_id,
+            "s3_key": s3_key,
             "summary": summary
         }
 

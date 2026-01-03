@@ -1,14 +1,16 @@
 # OPENROUTER_API_KEY = "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"
-OPENROUTER_API_KEY = "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"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# OPENROUTER_API_KEY = "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"
 
 
 import time
 import requests
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
-
-
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 FREE_MODELS = [
     "mistralai/mistral-7b-instruct:free",
